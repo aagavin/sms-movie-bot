@@ -1,4 +1,17 @@
 const axios = require('axios');
+const redis = require("redis");
+
+// connection to the service using our url, password 
+client = redis.createClient({
+      url: process.env.REDIS_URL,
+      password: process.env.REDIS_PASSWORD
+  });
+  
+  
+client.on("error", function (err) {
+  console.err("Error " + err);
+});
+
 
 
 const help_text = `
@@ -11,24 +24,45 @@ eg.
 
 `;
 const BASEURL = 'https://api.themoviedb.org/3';
-const buildurl = path => {
-    return `${BASEURL}/${path}/?api_key=${process.env.API_KEY}`;
-}
 
-const getPopular = async url => {
-    const response = await axios.get(`${buildurl(url)}`);
-    return response.data.results.map(media => {
-        return `${media.title ? media.title : media.name} (${media.id})`;
-    }).join('\n\n');
-};
-
-const getPopularMovies = async () => getPopular('movie/popular');
-
-const getPopularTv = async () => getPopular('tv/popular');
-
-const searchMovies = async query => {
+const buildurl = (path, queryObj) => {
     
+    const serialize = obj => {
+        let str = [];
+        for (let p in obj){
+            if (obj.hasOwnProperty(p)) {
+              str.push(encodeURIComponent(p) + "=" + encodeURIComponent(obj[p]));
+            }
+        }
+        return str.join("&");
+    }
+    const query = serialize(queryObj) ? `&${serialize(queryObj)}` : '';
+    return `${BASEURL}/${path}/?api_key=${process.env.API_KEY}${query}`;
 }
+
+const parseResponse = response => (
+  response.data.results.map(media => 
+    `${media.title ? media.title : media.name} (${media.id})`).join('\n\n')
+);
+
+const axiosGet = async url => parseResponse(await axios.get(url));
+const getPopularMovies = async () => axiosGet(buildurl('movie/popular'));
+const getPopularTv = async () => axiosGet(buildurl('tv/popular'));
+const searchMovies = async query => axiosGet(buildurl('search/movie', {query: query}));
+const searTVs = async query => axiosGet(buildurl('search/tv', {query: query}));
+
+const setFav = async favId => client.sadd('favs', favId);
+const getFav = async () => {
+    return new Promise((resolve, reject) => {
+        
+        client.smembers('favs', (err, replies) => {
+            console.log(replies)
+            resolve(replies)
+            
+        });
+    });
+    
+};
 
 const parseBody = async body => {
   const commands = body.toLowerCase().split(' ');
@@ -40,13 +74,22 @@ const parseBody = async body => {
           return getPopularTv();
       case 'search movie':
       case 'search movies':
-          return searchMovies(commands[2]);
+          return searchMovies(commands.splice(2));
+      case 'search tv':
+      case 'search tvs':
+          return searTVs(commands.splice(2));
+      case 'add fav':
+          await setFav(commands[2]);
+          return `${commands[2]} is added to fav`;
+      case 'get fav':
+          return getFav();
       case '--help':
-          return help_text;
+          return help_text; 
       default:
           return 'Not a valid request, text "--help" without quotes for support';
   }  
 };
+
 
 exports.handler = async function(context, event, callback) {
 	let twiml = new Twilio.twiml.MessagingResponse();
