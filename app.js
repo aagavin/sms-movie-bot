@@ -1,15 +1,15 @@
 const axios = require('axios');
-const redis = require("redis");
+const redis = require('redis');
 
 // connection to the service using our url, password 
 client = redis.createClient({
-      url: process.env.REDIS_URL,
-      password: process.env.REDIS_PASSWORD
-  });
+    url: process.env.REDIS_URL,
+    password: process.env.REDIS_PASSWORD
+});
   
   
 client.on("error", function (err) {
-  console.err("Error " + err);
+  console.error("Error " + err);
 });
 
 
@@ -51,13 +51,41 @@ const getPopularTv = async () => axiosGet(buildurl('tv/popular'));
 const searchMovies = async query => axiosGet(buildurl('search/movie', {query: query}));
 const searTVs = async query => axiosGet(buildurl('search/tv', {query: query}));
 
-const setFav = async favId => client.sadd('favs', favId);
+const getMovieByID = async movieid => {
+    const res = await axios.get(buildurl(`movie/${movieid}`).replace('/?', '?'));
+    return res.data.original_title;
+}
+
+const getTvByID = async tvid => {
+    const res = await axios.get(buildurl(`tv/${tvid}`).replace('/?', '?'));
+    return res.data.original_name;
+}
+
+const parseIds = async ids => {
+    return await Promise.all(ids.map(async id => {
+      try{
+          return await getMovieByID(id);
+      }
+      catch(e){
+          return await getTvByID(id);
+      }
+    }));
+}
+
+
+const setFav = async favId => {
+    return new Promise((resolve, reject) => {
+        client.sadd('favs', favId, () => resolve());
+    });
+    
+};
 const getFav = async () => {
     return new Promise((resolve, reject) => {
         
-        client.smembers('favs', (err, replies) => {
-            console.log(replies)
-            resolve(replies)
+        client.smembers('favs', async (err, replies) => {
+            const r = await parseIds(replies);
+            resolve(r.join(','));
+            reject(err);
             
         });
     });
@@ -96,3 +124,4 @@ exports.handler = async function(context, event, callback) {
 	twiml.message(await parseBody(event.Body));
 	callback(null, twiml);
 };
+        
